@@ -2,6 +2,13 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { GitHubClient } from "./lib/github";
 import { ADDED_BY, normalize } from "./lib/records";
 import { downloadRecords } from "./lib/export";
+import {
+  saveDevice,
+  loadDevice,
+  forgetDevice,
+  DEVICE_CHANNEL,
+  DEVICE_SESSION_ID,
+} from "./lib/device";
 import type { GitHubConfig, StoredRecord, PrintingRecord } from "./types";
 import { Icon, type IconName } from "./components/Icon";
 import { Dialog } from "./components/Dialog";
@@ -17,11 +24,10 @@ type Connection = RepositoryPreferences & {
   canWrite: boolean;
 };
 const nav: { id: View; label: string; icon: IconName }[] = [
-  { id: "dashboard", label: "Dashboard", icon: "grid" },
+  { id: "dashboard", label: "Home", icon: "grid" },
   { id: "add", label: "Add record", icon: "plus" },
   { id: "records", label: "All records", icon: "records" },
   { id: "customers", label: "Customers", icon: "users" },
-  { id: "settings", label: "Settings", icon: "settings" },
 ];
 const number = (n: number) => new Intl.NumberFormat("en-IN").format(n);
 const date = (s: string, full = false) =>
@@ -65,7 +71,9 @@ function initialPreferences(): RepositoryPreferences {
 }
 function initialView(): View {
   const hash = location.hash.slice(1);
-  return nav.some((n) => n.id === hash) ? (hash as View) : "dashboard";
+  return hash === "settings" || nav.some((n) => n.id === hash)
+    ? (hash as View)
+    : "dashboard";
 }
 function EmptyState({
   connected,
@@ -88,14 +96,14 @@ function EmptyState({
           ? "No matching records"
           : connected
             ? "Ready for your first record"
-            : "A home for every printing order"}
+            : "Open your printing records"}
       </h3>
       <p>
         {filtered
           ? "Try a different name, number, or date range."
           : connected
-            ? "Add a printing order, or import your diary records using the migration script."
-            : "Connect your private GitHub repository to see your records and keep every job organised."}
+            ? "Add a printing order to begin your record book."
+            : "A family member needs to connect this phone before you can open or save records."}
       </p>
       {!filtered && (
         <button
@@ -103,7 +111,7 @@ function EmptyState({
           onClick={connected ? onAdd : onConnect}
         >
           <Icon name={connected ? "plus" : "shield"} size={17} />
-          {connected ? "Add your first record" : "Connect your repository"}
+          {connected ? "Add your first record" : "Set up this phone"}
         </button>
       )}
     </div>
@@ -273,6 +281,15 @@ export default function App() {
     [page, setPage] = useState(1),
     [customerSearch, setCustomerSearch] = useState("");
   const [saving, setSaving] = useState(false);
+  const [remembered, setRemembered] = useState(false);
+  const [opening, setOpening] = useState(true);
+  const [forgetBusy, setForgetBusy] = useState(false);
+  const [deviceError, setDeviceError] = useState("");
+  const rememberedRef = useRef(false);
+  rememberedRef.current = remembered;
+  const deviceAttempt = useRef(0);
+  const pendingAutomatic = useRef(false);
+  const pendingDeviceSave = useRef<AbortController | null>(null);
   const client = useRef<GitHubClient | null>(null),
     pendingConnection = useRef<GitHubClient | null>(null);
   const generation = useRef(0),
@@ -297,18 +314,60 @@ export default function App() {
       connectionAttempt.current++;
       generation.current++;
       refreshSequence.current++;
+      deviceAttempt.current++;
+      pendingDeviceSave.current?.abort();
       pendingConnection.current?.disconnect();
       client.current?.disconnect();
     };
   }, []);
   useEffect(() => setPage(1), [search, from, to, person, sort]);
+  useEffect(() => {
+    void openSavedDevice();
+    const channel =
+      typeof BroadcastChannel === "undefined"
+        ? null
+        : new BroadcastChannel(DEVICE_CHANNEL);
+    if (channel)
+      channel.onmessage = (event) => {
+        if (
+          !event.data ||
+          event.data.sender === DEVICE_SESSION_ID ||
+          !["saved", "forgotten"].includes(event.data.type)
+        )
+          return;
+        const wasSaving = mutationBusy.current;
+        clearSession();
+        setRemembered(event.data.type === "saved");
+        setNotice({
+          kind: "warning",
+          message:
+            event.data.type === "forgotten"
+              ? "Saved access was removed in another tab. This phone needs to be set up again."
+              : "This phone’s setup changed in another tab. Reload to open the latest records.",
+        });
+        if (wasSaving)
+          setDeviceError(
+            "Access changed while a save was being confirmed. Check the latest records before entering that order again.",
+          );
+      };
+    return () => {
+      deviceAttempt.current++;
+      channel?.close();
+    };
+  }, []);
   function cancelConnecting() {
+    deviceAttempt.current++;
     connectionAttempt.current++;
+    pendingDeviceSave.current?.abort();
+    pendingDeviceSave.current = null;
+    pendingAutomatic.current = false;
+    setOpening(false);
     pendingConnection.current?.disconnect();
     pendingConnection.current = null;
   }
   function navigate(next: View) {
-    if (pendingConnection.current) cancelConnecting();
+    if (pendingConnection.current && !pendingAutomatic.current)
+      cancelConnecting();
     // A pristine form should start with today's date, even in a tab left open overnight.
     if (
       next === "add" &&
@@ -327,10 +386,38 @@ export default function App() {
     cancelConnecting();
     setConnectOpen(false);
   }
-  async function connect(config: GitHubConfig) {
+  async function openSavedDevice() {
+    const attempt = ++deviceAttempt.current;
+    setOpening(true);
+    setDeviceError("");
+    try {
+      const config = await loadDevice();
+      if (attempt !== deviceAttempt.current) return;
+      setRemembered(!!config);
+      if (config) await connect(config, "restore");
+      else setOpening(false);
+    } catch (error) {
+      if (attempt !== deviceAttempt.current) return;
+      setOpening(false);
+      setDeviceError(
+        error instanceof Error
+          ? error.message
+          : "Saved access could not be opened.",
+      );
+      setNotice({
+        kind: "warning",
+        message:
+          "This phone needs attention. Ask a family member to check Device setup.",
+      });
+    }
+  }
+  async function connect(
+    config: GitHubConfig,
+    rememberDevice: boolean | "restore" = false,
+  ) {
     if (mutationBusy.current || saving)
       throw new Error(
-        "Wait for the current GitHub save to finish before changing connections.",
+        "Wait for the current save to finish before changing the connection.",
       );
     const switching =
       !!client.current &&
@@ -352,6 +439,8 @@ export default function App() {
     const next = new GitHubClient(config),
       attempt = ++connectionAttempt.current;
     pendingConnection.current = next;
+    pendingAutomatic.current = rememberDevice === "restore";
+    if (pendingAutomatic.current) setOpening(true);
     try {
       const access = await next.verifyAccess();
       if (attempt !== connectionAttempt.current) return;
@@ -361,6 +450,20 @@ export default function App() {
         throw new Error(
           "A save is in progress. Finish it before changing connections.",
         );
+      if (rememberDevice === true) {
+        const controller = new AbortController();
+        pendingDeviceSave.current = controller;
+        await saveDevice(config, controller.signal);
+        if (attempt !== connectionAttempt.current) return;
+        pendingDeviceSave.current = null;
+        setRemembered(true);
+      } else if (rememberDevice === false && rememberedRef.current) {
+        await forgetDevice();
+        if (attempt !== connectionAttempt.current) return;
+        setRemembered(false);
+      }
+      if (attempt !== connectionAttempt.current) return;
+      setDeviceError("");
       generation.current++;
       refreshSequence.current++;
       busyRef.current = false;
@@ -400,17 +503,36 @@ export default function App() {
         setPage(1);
       }
       setConnectOpen(false);
+      if (viewRef.current === "settings") navigate("dashboard");
       setNotice({
         kind: access.private ? "success" : "warning",
         message: access.private
-          ? "Connected to your private repository. Records are up to date."
+          ? "Ready. Your records are up to date."
           : "This repository is public. Every record and photo can be read by anyone.",
       });
     } catch (error) {
       next.disconnect();
-      if (attempt === connectionAttempt.current) throw error;
+      if (attempt === connectionAttempt.current) {
+        if (rememberDevice === "restore") {
+          setDeviceError(
+            error instanceof Error
+              ? error.message
+              : "Could not open saved access.",
+          );
+          setNotice({
+            kind: "warning",
+            message:
+              "Could not open your records. Check the internet connection and try again, or ask a family member to check Device setup.",
+          });
+        } else throw error;
+      }
       // A canceled dialog has no consumer for an error and must never create a session.
     } finally {
+      if (attempt === connectionAttempt.current) {
+        setOpening(false);
+        pendingAutomatic.current = false;
+        pendingDeviceSave.current = null;
+      }
       if (pendingConnection.current === next) pendingConnection.current = null;
       if (client.current !== next) next.disconnect();
     }
@@ -460,7 +582,7 @@ export default function App() {
       setNotice({
         kind: "warning",
         message:
-          "Wait for GitHub to confirm the current change before disconnecting.",
+          "Wait for the current change to finish saving before disconnecting.",
       });
       return;
     }
@@ -471,11 +593,20 @@ export default function App() {
       )
     )
       return;
+    clearSession();
+    setNotice({
+      kind: "success",
+      message: "Disconnected. Loaded records have been cleared from this tab.",
+    });
+  }
+  function clearSession() {
     cancelConnecting();
     generation.current++;
     invalidateRefresh();
     client.current?.disconnect();
     client.current = null;
+    mutationBusy.current = false;
+    setSaving(false);
     setConnection(null);
     setRecords([]);
     setIssues([]);
@@ -489,19 +620,55 @@ export default function App() {
     setFormKey((k) => k + 1);
     setAddDirty(false);
     setEditDirty(false);
-    setNotice({
-      kind: "success",
-      message:
-        "Disconnected. Your token and loaded records have been cleared from this tab.",
-    });
+    setSearch("");
+    setFrom("");
+    setTo("");
+    setPerson("");
+    setCustomerSearch("");
+    setPage(1);
+  }
+  async function forgetThisPhone() {
+    if (mutationBusy.current || saving || forgetBusy) return;
+    if (
+      !window.confirm(
+        "Forget this phone? Saved access will be removed and records closed in all open tabs. Unsaved entries will be cleared. A family member will need to set up this phone again.",
+      )
+    )
+      return;
+    setForgetBusy(true);
+    cancelConnecting();
+    try {
+      await forgetDevice();
+      clearSession();
+      setRemembered(false);
+      setDeviceError("");
+      setNotice({
+        kind: "success",
+        message:
+          "This phone has been forgotten. Saved access and loaded records have been cleared.",
+      });
+    } catch (error) {
+      setNotice({
+        kind: "error",
+        message:
+          error instanceof Error
+            ? error.message
+            : "Saved access could not be removed. Please try again.",
+      });
+    } finally {
+      setForgetBusy(false);
+    }
   }
   async function save(record: PrintingRecord, photoChange?: Blob | null) {
     const current = client.current,
       target = editing;
-    if (!current) throw new Error("Connect to GitHub before saving.");
+    if (!current)
+      throw new Error(
+        "Connect this phone before saving. Your entry is still here.",
+      );
     if (mutationBusy.current)
       throw new Error(
-        "Another change is being saved. Wait for GitHub confirmation before trying again.",
+        "Another change is being saved. Please wait before trying again.",
       );
     if (!navigator.onLine)
       throw new Error(
@@ -517,7 +684,7 @@ export default function App() {
         : await current.create(record, photoChange ?? undefined);
       if (id !== generation.current)
         throw new Error(
-          "The session ended. Reconnect and refresh to check whether GitHub committed this record.",
+          "The connection ended. Reconnect and refresh to check whether this record was saved.",
         );
       setRecords((previous) =>
         [result, ...previous.filter((r) => r.path !== result.path)].sort(
@@ -533,15 +700,17 @@ export default function App() {
         setAddDirty(false);
       }
       navigate("records");
-      const confirmedMessage = `${target ? "Changes saved" : "Record saved"} to GitHub.`;
+      const confirmedMessage = `${target ? "Changes saved" : "Record saved"}.`;
       setNotice({
         kind: current.warnings.length ? "warning" : "success",
         message: `${confirmedMessage} ${current.warnings.join(" ")}`,
       });
       await syncRecords(true, confirmedMessage);
     } finally {
-      mutationBusy.current = false;
-      if (id === generation.current) setSaving(false);
+      if (id === generation.current) {
+        mutationBusy.current = false;
+        setSaving(false);
+      }
     }
   }
   async function remove() {
@@ -559,7 +728,7 @@ export default function App() {
       setRecords((previous) => previous.filter((r) => r.path !== target.path));
       setDetail(null);
       setDeleting(null);
-      const confirmedMessage = "Record deleted from GitHub.";
+      const confirmedMessage = "Record deleted.";
       setNotice({
         kind: result.warnings.length ? "warning" : "success",
         message: `${confirmedMessage} ${result.warnings.join(" ")}`,
@@ -573,8 +742,10 @@ export default function App() {
             : "Deletion failed. Please refresh and try again.",
         );
     } finally {
-      mutationBusy.current = false;
-      if (id === generation.current) setDeleteBusy(false);
+      if (id === generation.current) {
+        mutationBusy.current = false;
+        setDeleteBusy(false);
+      }
     }
   }
   async function reloadLatest(): Promise<StoredRecord> {
@@ -690,7 +861,10 @@ export default function App() {
       );
     }).length;
   const connected = !!connection,
-    activeLabel = nav.find((n) => n.id === view)!.label;
+    activeLabel =
+      view === "settings"
+        ? "Device setup"
+        : nav.find((n) => n.id === view)!.label;
   const onConnect = () => {
       if (!mutationBusy.current && !saving) setConnectOpen(true);
     },
@@ -740,29 +914,18 @@ export default function App() {
           ))}
         </nav>
         <div className="sidebar-bottom">
-          <div className="storage-card">
-            <span className="storage-icon">
-              <Icon name="shield" size={18} />
-            </span>
-            <strong>
-              {connected
-                ? connection.private
-                  ? "Your private workspace"
-                  : "Your workspace"
-                : "Your records. Your repository."}
-            </strong>
-            <p>
-              {connected
-                ? `${connection.owner}/${connection.repo}`
-                : "Stored in GitHub. Owned by you. Simple by design."}
-            </p>
-            <button
-              onClick={() => (connected ? navigate("settings") : onConnect())}
-            >
-              {connected ? "Manage connection" : "Set up your workspace"}
-              <Icon name="arrow" size={15} />
-            </button>
+          <div className="family-sidebar-note">
+            <Icon name="book" size={19} />
+            <p>Every order, easy to find.</p>
           </div>
+          <button
+            className="device-setup-link"
+            onClick={() => navigate("settings")}
+            aria-current={view === "settings" ? "page" : undefined}
+          >
+            <Icon name="settings" size={16} />
+            Device setup
+          </button>
           <div className="sidebar-foot">
             <span className="tiny-logo">
               <Icon name="book" size={14} />
@@ -785,16 +948,18 @@ export default function App() {
               <span className="status-dot" />
               {!online
                 ? "Offline"
-                : connected
-                  ? "GitHub connected"
-                  : "Not connected"}
+                : opening
+                  ? "Opening records…"
+                  : connected
+                    ? "Ready"
+                    : "Not connected"}
             </span>
             <button
-              className="account-avatar"
+              className="icon-btn device-setup-button"
               onClick={() => navigate("settings")}
-              aria-label="Open workspace settings"
+              aria-label="Open device setup"
             >
-              PP
+              <Icon name="settings" size={18} />
             </button>
           </div>
         </header>
@@ -821,6 +986,26 @@ export default function App() {
                 onClick={() => setNotice(null)}
               >
                 <Icon name="close" size={16} />
+              </button>
+            </div>
+          )}
+          {opening && (
+            <div className="notice opening-records" role="status">
+              <span className="spinner" />
+              <span>Opening your records…</span>
+            </div>
+          )}
+          {!opening && remembered && !connected && (
+            <div className="notice notice-warning saved-device-retry">
+              <span>
+                This phone is set up. Connect to the internet to open your
+                records.
+              </span>
+              <button
+                className="btn btn-secondary"
+                onClick={() => void openSavedDevice()}
+              >
+                Try again
               </button>
             </div>
           )}
@@ -871,20 +1056,20 @@ export default function App() {
                 <span className="date-separator" />
                 Your daily workspace
               </div>
-              {!connected && (
+              {!connected && !opening && !remembered && (
                 <div className="connect-banner">
                   <span className="banner-icon">
                     <Icon name="shield" size={24} />
                   </span>
                   <div>
-                    <strong>A private space for your printing records</strong>
+                    <strong>This phone needs to be connected</strong>
                     <p>
-                      Connect your GitHub data repository to get started. No
-                      subscriptions, just your records.
+                      A family member can set up access to your printing records
+                      here.
                     </p>
                   </div>
                   <button className="btn btn-secondary" onClick={onConnect}>
-                    Connect GitHub
+                    Set up this phone
                     <Icon name="arrow" size={16} />
                   </button>
                 </div>
@@ -972,7 +1157,7 @@ export default function App() {
                     <span className="status-dot" />{" "}
                     {lastSync
                       ? `Last checked at ${lastSync.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}`
-                      : "Connect once to start your session"}
+                      : "Your records will appear after connecting"}
                     <button
                       className="text-btn"
                       disabled={
@@ -1011,8 +1196,8 @@ export default function App() {
                   <div className="quiet-note">
                     <Icon name="shield" size={18} />
                     <p>
-                      <strong>Good records. Peace of mind.</strong>Every
-                      confirmed save is a GitHub commit, with a history of your
+                      <strong>Good records. Peace of mind.</strong>Every saved
+                      order stays in your record book, with a history of
                       changes.
                     </p>
                   </div>
@@ -1042,7 +1227,6 @@ export default function App() {
               onSave={save}
               onCancel={() => navigate("dashboard")}
               onDirtyChange={setAddDirty}
-              onSavingChange={setSaving}
             />
           </div>
           {view === "records" && (
@@ -1058,19 +1242,6 @@ export default function App() {
                   </p>
                 </div>
                 <div className="button-group">
-                  <button
-                    className="btn btn-secondary"
-                    disabled={!records.length}
-                    onClick={() =>
-                      downloadRecords(
-                        records.map((r) => r.record),
-                        "csv",
-                      )
-                    }
-                  >
-                    <Icon name="download" size={17} />
-                    Export CSV
-                  </button>
                   <button className="btn btn-primary" onClick={onAdd}>
                     <Icon name="plus" size={17} />
                     Add record
@@ -1317,64 +1488,98 @@ export default function App() {
             <>
               <div className="page-heading">
                 <div>
-                  <div className="eyebrow">SIMPLE, SAFE, AND YOURS</div>
+                  <div className="eyebrow">
+                    FOR THE FAMILY MEMBER SETTING UP THIS PHONE
+                  </div>
                   <h1>
-                    Workspace settings<span className="accent-period">.</span>
+                    Device setup<span className="accent-period">.</span>
                   </h1>
-                  <p>Manage your connection and keep a copy of your records.</p>
+                  <p>
+                    Manage this phone’s access here. Everyday work stays in your
+                    record book.
+                  </p>
                 </div>
+                <button
+                  className="btn btn-secondary setup-done-button"
+                  onClick={() => navigate("dashboard")}
+                >
+                  <Icon name="arrow" size={17} /> Back to Home
+                </button>
               </div>
-              <div className="settings-grid">
+              <div className="device-setup-layout">
                 <section className="panel settings-panel">
                   <div className="panel-head">
                     <div>
                       <h2>
                         <Icon name="shield" size={20} />
-                        GitHub connection
+                        Record storage connection
                       </h2>
                       <p>
-                        Your permanent storage, with no database subscription.
+                        GitHub details are only needed by the person managing
+                        this device.
                       </p>
                     </div>
                   </div>
                   <div className="settings-body">
+                    {deviceError && (
+                      <details className="notice notice-warning data-issues">
+                        <summary>
+                          Help for the person setting up this phone
+                        </summary>
+                        <p>{deviceError}</p>
+                      </details>
+                    )}
                     {connection ? (
                       <>
                         <div className="connection-status">
                           <span className="status-dot" />
-                          <strong>Connected this session</strong>
+                          <strong>This phone is ready</strong>
                           <span className="pill">
                             {connection.private
                               ? "Private repository"
                               : "Public repository"}
                           </span>
                         </div>
-                        <dl className="settings-dl">
-                          <div>
-                            <dt>Repository</dt>
-                            <dd>
-                              {connection.owner}/{connection.repo}
-                            </dd>
-                          </div>
-                          <div>
-                            <dt>Branch</dt>
-                            <dd>{connection.branch}</dd>
-                          </div>
-                          <div>
-                            <dt>Token storage</dt>
-                            <dd>In memory only</dd>
-                          </div>
-                          <div>
-                            <dt>Records loaded</dt>
-                            <dd>{records.length}</dd>
-                          </div>
-                        </dl>
+                        <details className="connection-technical-details">
+                          <summary>Connection details</summary>
+                          <dl className="settings-dl">
+                            <div>
+                              <dt>Repository</dt>
+                              <dd>
+                                {connection.owner}/{connection.repo}
+                              </dd>
+                            </div>
+                            <div>
+                              <dt>Branch</dt>
+                              <dd>{connection.branch}</dd>
+                            </div>
+                            <div>
+                              <dt>Token storage</dt>
+                              <dd>
+                                {remembered
+                                  ? "Remembered on this trusted phone"
+                                  : "This tab only"}
+                              </dd>
+                            </div>
+                            <div>
+                              <dt>Records loaded</dt>
+                              <dd>{records.length}</dd>
+                            </div>
+                          </dl>
+                        </details>
                         {!connection.private && (
                           <div className="notice notice-warning">
                             Your records and photos are publicly readable. Use a
                             separate private repository for confidential data.
                           </div>
                         )}
+                        <div className="notice notice-success">
+                          <span>
+                            {remembered
+                              ? "Your parents can open the app and use their records. No login is needed on this phone."
+                              : "This connection is for this tab only. To keep the phone ready next time, choose Change connection and select Keep this phone connected."}
+                          </span>
+                        </div>
                         <div className="button-group">
                           <button
                             className="btn btn-secondary"
@@ -1383,14 +1588,16 @@ export default function App() {
                           >
                             Change connection
                           </button>
-                          <button
-                            className="btn btn-danger-outline"
-                            onClick={disconnect}
-                            disabled={saving || deleteBusy}
-                          >
-                            <Icon name="logout" size={16} />
-                            Disconnect
-                          </button>
+                          {!remembered && (
+                            <button
+                              className="btn btn-danger-outline"
+                              onClick={disconnect}
+                              disabled={saving || deleteBusy}
+                            >
+                              <Icon name="logout" size={16} />
+                              Disconnect this session
+                            </button>
+                          )}
                         </div>
                       </>
                     ) : (
@@ -1399,25 +1606,39 @@ export default function App() {
                         onConnect={connect}
                       />
                     )}
+                    {(remembered || deviceError) && (
+                      <div className="forget-device">
+                        <p className="field-hint">
+                          Remove saved access before giving this phone to
+                          someone else.
+                        </p>
+                        <button
+                          className="btn btn-danger-outline"
+                          onClick={() => void forgetThisPhone()}
+                          disabled={
+                            saving || deleteBusy || forgetBusy || opening
+                          }
+                        >
+                          {forgetBusy ? "Forgetting…" : "Forget this phone"}
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </section>
-                <div>
-                  <section className="panel settings-panel">
-                    <div className="panel-head">
-                      <div>
-                        <h2>
-                          <Icon name="download" size={20} />
-                          Export & backup
-                        </h2>
-                        <p>Download a copy from your current session.</p>
-                      </div>
-                    </div>
-                    <div className="settings-body">
+                <details className="panel setup-details">
+                  <summary>
+                    <Icon name="download" size={19} />
+                    <span>Backup & advanced options</span>
+                    <Icon name="chevron" size={16} />
+                  </summary>
+                  <div className="setup-details-body">
+                    <section>
+                      <h2>Download a backup</h2>
                       <p className="muted">
-                        JSON keeps every record field and can be restored with
-                        the import script. CSV opens in a spreadsheet. Photos
-                        are separate files; clone your private repository for a
-                        full backup.
+                        JSON keeps all record fields for restoring with the
+                        import script. CSV opens in a spreadsheet. Photos are
+                        separate files; clone the private repository for a
+                        complete backup.
                       </p>
                       <div className="button-group">
                         <button
@@ -1448,28 +1669,32 @@ export default function App() {
                         </button>
                       </div>
                       <p className="field-hint">
-                        Exported files contain business data. Keep them on a
-                        trusted device.
+                        Exports contain business data. Keep them on a trusted
+                        device.
                       </p>
-                    </div>
-                  </section>
-                  <section className="privacy-note">
-                    <Icon name="shield" size={21} />
-                    <div>
-                      <h3>A note on shared devices</h3>
+                    </section>
+                    <section className="setup-security-note">
+                      <h2>Privacy on shared devices</h2>
                       <p>
-                        A GitHub token grants access to your data. Use a trusted
-                        device, choose a short expiry, and disconnect when
-                        finished. A browser password cannot protect a public
-                        data repository.
+                        Only keep access on a trusted family device. Anyone
+                        using a connected phone can view or change the records.
+                        Use Forget this phone before sharing or giving it away.
                       </p>
                       <p>
-                        Only the repository name is remembered on this device.
-                        Tokens and records are never saved to browser storage.
+                        If Keep this phone connected is selected during setup,
+                        access is encrypted and saved in this browser for
+                        automatic reconnection. The key is on this device too;
+                        browser scripts and extensions can use saved access.
+                        Otherwise the token stays in memory for this tab.
+                        Records remain in GitHub.
                       </p>
-                    </div>
-                  </section>
-                </div>
+                      <p>
+                        Device setup is kept separate to simplify daily use.
+                        This page is not a separate administrator login.
+                      </p>
+                    </section>
+                  </div>
+                </details>
               </div>
             </>
           )}
@@ -1479,8 +1704,7 @@ export default function App() {
               recordkeeping.
             </span>
             <span>
-              <Icon name="shield" size={13} /> Your data lives in your GitHub
-              repository.
+              <Icon name="shield" size={13} /> Printing records, kept together.
             </span>
           </footer>
         </main>
@@ -1508,8 +1732,8 @@ export default function App() {
       </nav>
       {connectOpen && (
         <Dialog
-          title="Connect your workspace"
-          description="A private repository. A simpler way to keep records."
+          title="Set up this phone"
+          description="For the family member managing access to your records."
           onClose={closeConnection}
         >
           <ConnectionForm preferences={preferences} onConnect={connect} />
@@ -1629,7 +1853,6 @@ export default function App() {
             onSave={save}
             onCancel={closeEdit}
             onDirtyChange={setEditDirty}
-            onSavingChange={setSaving}
             onReloadLatest={reloadLatest}
           />
         </Dialog>
@@ -1651,9 +1874,9 @@ export default function App() {
             </span>
           </div>
           <p className="muted">
-            The JSON record will be deleted from GitHub. Unshared reference
-            photos will also be removed where possible. Previous versions remain
-            in Git history.
+            This printing record will be deleted. Its reference photo will also
+            be removed where possible. Previous versions remain in the backup
+            history.
           </p>
           {deleteError && (
             <div role="alert" className="notice notice-error">

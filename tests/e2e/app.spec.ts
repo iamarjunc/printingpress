@@ -60,16 +60,17 @@ async function mockGitHub(page: Page, seed: PrintingRecord[] = [sample('old-1')]
   })
   return { db, writes, calls, pauseNextWrite: () => { let started!: () => void, resume!: () => void; const began = new Promise<void>(resolve => { started = resolve }); const resumed = new Promise<void>(resolve => { resume = resolve }); heldWrite = { started, resumed }; return { began, resume } }, pauseNextAccess: () => { let started!: () => void, resume!: () => void, complete!: () => void; const began = new Promise<void>(resolve => { started = resolve }); const resumed = new Promise<void>(resolve => { resume = resolve }); const done = new Promise<void>(resolve => { complete = resolve }); heldAccess = { started, resumed, complete }; return { began, resume, done } }, pauseNextTree: () => { let started!: () => void, resume!: () => void, complete!: () => void; const began = new Promise<void>(resolve => { started = resolve }); const resumed = new Promise<void>(resolve => { resume = resolve }); const done = new Promise<void>(resolve => { complete = resolve }); heldTree = { started, resumed, complete }; return { began, resume, done } }, loseNextConfirmation: () => { dropNextSave = true }, rejectAuthentication: () => { denied = true }, changeSha: (path: string) => { const file = db.get(path)!; db.set(path, { sha: sha(), content: Buffer.from(JSON.stringify({ ...JSON.parse(file.content.toString()), books: 19, updated_at: '2026-10-25T12:00:00.000Z' })) }) } }
 }
-async function connect(page: Page) {
-  await page.getByRole('button', { name: 'Connect GitHub', exact: true }).click()
+async function connect(page: Page, remember = false) {
+  await page.getByRole('button', { name: 'Set up this phone', exact: true }).first().click()
   const dialog = page.getByRole('dialog')
   await dialog.getByLabel('Repository owner').fill('family')
   await dialog.getByLabel('Data repository', { exact: true }).fill('press-data')
   await dialog.getByLabel('Branch').fill('main')
   await dialog.getByLabel('Fine-grained personal access token').fill(TOKEN)
+  if (remember) await dialog.getByLabel('Keep this phone connected', { exact: true }).check()
   await dialog.getByRole('button', { name: 'Connect to GitHub', exact: true }).click()
   await expect(dialog).not.toBeVisible()
-  await expect(page.getByText('GitHub connected', { exact: true })).toBeVisible()
+  await expect(page.getByText('Ready', { exact: true })).toBeVisible()
 }
 async function navigate(page: Page, name: string) { await page.locator('.desktop-nav').getByRole('button', { name, exact: true }).click() }
 async function fillOrder(page: Page, customer = 'New Print Customer') {
@@ -88,6 +89,9 @@ test('mobile navigation, disconnected form and unsaved draft remain usable witho
   await page.setViewportSize({ width: 390, height: 844 })
   await page.goto('/')
   await expect(page.getByRole('heading', { name: 'Your press, at a glance.' })).toBeVisible()
+  await expect(page.locator('.mobile-nav').getByRole('button')).toHaveCount(4)
+  await expect(page.locator('.mobile-nav').getByRole('button', { name: 'Settings', exact: true })).toHaveCount(0)
+  await expect(page.getByLabel('Fine-grained personal access token')).toHaveCount(0)
   await page.locator('.mobile-nav').getByRole('button', { name: 'Add record', exact: true }).click()
   const form = page.locator('.record-form:visible')
   await form.getByLabel('Customer name', { exact: true }).fill('മലയാളം പ്രിന്റ്')
@@ -97,11 +101,12 @@ test('mobile navigation, disconnected form and unsaved draft remain usable witho
   await page.locator('.mobile-nav').getByRole('button', { name: 'Add record', exact: true }).click()
   await expect(form.getByLabel('Customer name', { exact: true })).toHaveValue('മലയാളം പ്രിന്റ്')
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
-  for (const label of ['Records', 'Customers', 'Settings', 'Home']) {
+  for (const label of ['Records', 'Customers', 'Home']) {
     await page.locator('.mobile-nav').getByRole('button', { name: label, exact: true }).click()
     await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
   }
-  await page.getByRole('button', { name: 'Connect GitHub', exact: true }).click()
+  await expect(page.getByLabel('Fine-grained personal access token')).toHaveCount(0)
+  await page.getByRole('button', { name: 'Set up this phone', exact: true }).first().click()
   const dialog = page.getByRole('dialog')
   await expect(dialog.getByLabel('Fine-grained personal access token')).toBeVisible()
   await expect.poll(() => dialog.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true)
@@ -113,6 +118,7 @@ test('connects to private GitHub storage, groups customers without losing origin
   const api = await mockGitHub(page, [sample('old-1'), sample('old-2', { customer_name: 'DEMO STATIONERY', start_no: 801, end_no: 1400 }), sample('old-3', { customer_name: 'Demo Workshop', books: 5 })])
   await page.goto('/')
   await connect(page)
+  expect(await inspectSavedDevice(page)).toBeNull()
   await expect(page.locator('.stat-card').nth(0).locator('.stat-value')).toHaveText('3')
   await expect(page.locator('.stat-card').nth(1).locator('.stat-value')).toHaveText('2')
   await navigate(page, 'Customers')
@@ -123,9 +129,9 @@ test('connects to private GitHub storage, groups customers without losing origin
   await form.getByLabel('Customer name', { exact: true }).fill('demo stationery')
   await expect(form.locator('.history-entry')).toHaveCount(2)
   await expect(form.locator('.history-range').first()).toHaveText(/201.*800/)
-  await navigate(page, 'Settings')
+  await page.getByRole('button', { name: 'Open device setup', exact: true }).click()
   page.on('dialog', dialog => dialog.accept())
-  await page.getByRole('button', { name: 'Disconnect', exact: true }).click()
+  await page.getByRole('button', { name: 'Disconnect this session', exact: true }).click()
   await expect(page.getByText('Not connected', { exact: true })).toBeVisible()
   const storage = await page.evaluate(() => ({ local: { ...localStorage }, session: { ...sessionStorage } }))
   expect(JSON.stringify(storage)).not.toContain(TOKEN)
@@ -140,7 +146,7 @@ test('confirmed create, update and explicitly confirmed delete use the same indi
   await navigate(page, 'Add record')
   const form = await fillOrder(page)
   await form.getByRole('button', { name: 'Save record', exact: true }).click()
-  await expect(page.getByRole('status').filter({ hasText: 'Record saved to GitHub.' })).toBeVisible()
+  await expect(page.getByRole('status').filter({ hasText: 'Record saved.' })).toBeVisible()
   expect(api.writes).toHaveLength(1)
   const created = api.writes[0]
   expect(created.path).toMatch(/^records\/\d{4}\/\d{2}\/.*\.json$/)
@@ -188,7 +194,7 @@ test('stale SHA conflict preserves entered edits and never reports a successful 
   await expect(edit.getByLabel('Number of books', { exact: true })).toHaveValue('23')
   await expect(edit.getByRole('button', { name: 'Save changes', exact: true })).toBeDisabled()
   expect(api.writes).toHaveLength(0)
-  await expect(page.getByText('Changes saved to GitHub.', { exact: true })).toHaveCount(0)
+  await expect(page.getByText('Changes saved.', { exact: true })).toHaveCount(0)
   await edit.getByRole('button', { name: 'Review latest version', exact: true }).click()
   await expect(edit.getByText('Latest version loaded — your entered changes are kept', { exact: true })).toBeVisible()
   await expect(edit.getByText('19 books', { exact: true })).toBeVisible()
@@ -205,7 +211,7 @@ test('authentication failure is visible and token is never persisted', async ({ 
   const api = await mockGitHub(page)
   api.rejectAuthentication()
   await page.goto('/')
-  await page.getByRole('button', { name: 'Connect GitHub', exact: true }).click()
+  await page.getByRole('button', { name: 'Set up this phone', exact: true }).first().click()
   const dialog = page.getByRole('dialog')
   await dialog.getByLabel('Repository owner').fill('family')
   await dialog.getByLabel('Data repository', { exact: true }).fill('press-data')
@@ -247,7 +253,7 @@ test('reference photos are compressed into separate files and removal updates th
   })
   await expect(form.getByText('Photo ready to attach', { exact: true })).toBeVisible()
   await form.getByRole('button', { name: 'Save record', exact: true }).click()
-  await expect(page.getByRole('status').filter({ hasText: 'Record saved to GitHub.' })).toBeVisible()
+  await expect(page.getByRole('status').filter({ hasText: 'Record saved.' })).toBeVisible()
   expect(api.writes).toHaveLength(2)
   expect(api.writes[0].path).toMatch(/^images\/\d{4}\/\d{2}\/.*\.(jpg|webp)$/)
   const record = JSON.parse(Buffer.from(String(api.writes[1].body.content), 'base64').toString())
@@ -277,7 +283,7 @@ test('an older in-flight refresh cannot hide a newly committed record', async ({
   await navigate(page, 'Add record')
   const form = await fillOrder(page, 'Concurrent Customer')
   await form.getByRole('button', { name: 'Save record', exact: true }).click()
-  await expect(page.getByRole('status').filter({ hasText: 'Record saved to GitHub.' })).toBeVisible()
+  await expect(page.getByRole('status').filter({ hasText: 'Record saved.' })).toBeVisible()
   paused.resume()
   await paused.done
   await page.waitForTimeout(200) // Let the deliberately stale request finish applying, if the guard is broken.
@@ -289,11 +295,12 @@ test('closing a pending connection cancels it instead of authenticating in the b
   const api = await mockGitHub(page)
   const paused = api.pauseNextAccess()
   await page.goto('/')
-  await page.getByRole('button', { name: 'Connect GitHub', exact: true }).click()
+  await page.getByRole('button', { name: 'Set up this phone', exact: true }).first().click()
   const dialog = page.getByRole('dialog')
   await dialog.getByLabel('Repository owner').fill('family')
   await dialog.getByLabel('Data repository', { exact: true }).fill('press-data')
   await dialog.getByLabel('Fine-grained personal access token').fill(TOKEN)
+  await dialog.getByLabel('Keep this phone connected', { exact: true }).check()
   await dialog.getByRole('button', { name: 'Connect to GitHub', exact: true }).click()
   await paused.began
   await dialog.getByRole('button', { name: 'Close dialog', exact: true }).click()
@@ -303,8 +310,9 @@ test('closing a pending connection cancels it instead of authenticating in the b
   await page.waitForTimeout(200) // A canceled connection must stay canceled after its delayed response.
   expect(api.calls).toHaveLength(1)
   await expect(page.getByText('Not connected', { exact: true })).toBeVisible()
-  await expect(page.getByText('GitHub connected', { exact: true })).toHaveCount(0)
+  await expect(page.getByText('Ready', { exact: true })).toHaveCount(0)
   expect(api.writes).toHaveLength(0)
+  expect(await inspectSavedDevice(page)).toBeNull()
 })
 
 test('an edit cannot be closed while its commit confirmation is pending', async ({ page }) => {
@@ -323,7 +331,7 @@ test('an edit cannot be closed while its commit confirmation is pending', async 
   await expect(edit.getByLabel('Number of books', { exact: true })).toBeDisabled()
   paused.resume()
   await expect(edit).not.toBeVisible()
-  await expect(page.getByRole('status').filter({ hasText: 'Changes saved to GitHub.' })).toBeVisible()
+  await expect(page.getByRole('status').filter({ hasText: 'Changes saved.' })).toBeVisible()
   expect(api.writes).toHaveLength(1)
 })
 
@@ -341,6 +349,141 @@ test('offline entry is retained without a GitHub write and can be saved after re
   expect(api.writes).toHaveLength(0)
   await page.context().setOffline(false)
   await form.getByRole('button', { name: 'Save record', exact: true }).click()
-  await expect(page.getByRole('status').filter({ hasText: 'Record saved to GitHub.' })).toBeVisible()
+  await expect(page.getByRole('status').filter({ hasText: 'Record saved.' })).toBeVisible()
   expect(api.writes).toHaveLength(1)
+})
+
+test('daily screens keep setup fields and backup controls in the separate device setup area', async ({ page }) => {
+  await page.goto('/')
+  await expect(page.locator('.desktop-nav').getByRole('button')).toHaveText(['Home', 'Add record', 'All records', 'Customers'])
+  for (const label of ['Add record', 'All records', 'Customers', 'Home']) {
+    await navigate(page, label)
+    await expect(page.getByLabel('Repository owner')).toHaveCount(0)
+    await expect(page.getByLabel('Fine-grained personal access token')).toHaveCount(0)
+    await expect(page.getByRole('button', { name: 'Export JSON', exact: true })).toHaveCount(0)
+  }
+  await page.getByRole('button', { name: 'Open device setup', exact: true }).click()
+  await expect(page.getByRole('heading', { name: 'Device setup.', exact: true })).toBeVisible()
+  await expect(page.getByLabel('Fine-grained personal access token')).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Export JSON', exact: true })).not.toBeVisible()
+  await page.getByText('Backup & advanced options', { exact: true }).click()
+  await expect(page.getByRole('button', { name: 'Export JSON', exact: true })).toBeVisible()
+})
+
+// These inspect only the fictional test credential's browser storage, never a live token.
+async function inspectSavedDevice(page: Page) {
+  return page.evaluate(async () => {
+    if (!(await indexedDB.databases()).some(database => database.name === 'pressbook-trusted-device-v1')) return null
+    const database = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open('pressbook-trusted-device-v1')
+      request.onsuccess = () => resolve(request.result)
+      request.onerror = () => reject(request.error)
+    })
+    try {
+      if (!database.objectStoreNames.contains('access')) return null
+      return await new Promise<{ extractable: boolean; algorithm: string; ivBytes: number; encryptedText: string } | null>((resolve, reject) => {
+        const transaction = database.transaction('access', 'readonly')
+        const request = transaction.objectStore('access').get('github')
+        request.onsuccess = () => {
+          const entry = request.result
+          resolve(entry ? { extractable: entry.key.extractable, algorithm: entry.key.algorithm.name, ivBytes: entry.iv.byteLength, encryptedText: new TextDecoder().decode(entry.ciphertext) } : null)
+        }
+        request.onerror = () => reject(request.error)
+      })
+    } finally { database.close() }
+  })
+}
+
+test('a trusted phone reopens its records without a daily token field or app login', async ({ page }) => {
+  const api = await mockGitHub(page)
+  await page.goto('/')
+  await connect(page, true)
+  const remembered = await inspectSavedDevice(page)
+  expect(remembered).not.toBeNull()
+  expect(remembered!.extractable).toBe(false)
+  expect(remembered!.algorithm).toBe('AES-GCM')
+  expect(remembered!.ivBytes).toBe(12)
+  expect(remembered!.encryptedText).not.toContain(TOKEN)
+  expect(await page.evaluate(() => JSON.stringify({ ...localStorage, ...sessionStorage }))).not.toContain(TOKEN)
+  await page.reload()
+  await expect(page.getByText('Ready', { exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'View Demo Stationery record old-1', exact: true })).toBeVisible()
+  await expect(page.getByLabel('Fine-grained personal access token')).toHaveCount(0)
+  await expect(page.getByRole('dialog')).toHaveCount(0)
+  await expect(page.getByLabel(/password|PIN/i)).toHaveCount(0)
+  expect(api.writes).toHaveLength(0)
+})
+
+test('forgetting a trusted phone clears its other open tabs and prevents automatic reconnection', async ({ page }) => {
+  const api = await mockGitHub(page)
+  await page.goto('/')
+  await connect(page, true)
+  const other = await page.context().newPage()
+  const otherApi = await mockGitHub(other)
+  await other.goto('/')
+  await expect(other.getByText('Ready', { exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'Open device setup', exact: true }).click()
+  page.on('dialog', dialog => dialog.accept())
+  await page.getByRole('button', { name: 'Forget this phone', exact: true }).click()
+  await expect(page.getByText('Not connected', { exact: true })).toBeVisible()
+  await expect(other.getByText('Not connected', { exact: true })).toBeVisible()
+  await expect(other.getByRole('button', { name: 'View Demo Stationery record old-1', exact: true })).toHaveCount(0)
+  expect(await inspectSavedDevice(page)).toBeNull()
+  const callsBefore = otherApi.calls.length
+  await other.reload()
+  await expect(other.getByText('Not connected', { exact: true })).toBeVisible()
+  await expect(other.getByText('Ready', { exact: true })).toHaveCount(0)
+  expect(otherApi.calls).toHaveLength(callsBefore)
+  expect(api.writes).toHaveLength(0)
+  expect(otherApi.writes).toHaveLength(0)
+  await other.close()
+})
+
+test('a damaged saved connection returns to setup without sending an unusable token to GitHub', async ({ page }) => {
+  const api = await mockGitHub(page)
+  await page.goto('/')
+  await connect(page, true)
+  await page.evaluate(async () => {
+    const database = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open('pressbook-trusted-device-v1')
+      request.onsuccess = () => resolve(request.result)
+      request.onerror = () => reject(request.error)
+    })
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const transaction = database.transaction('access', 'readwrite')
+        const store = transaction.objectStore('access'), request = store.get('github')
+        request.onsuccess = () => store.put({ ...request.result, ciphertext: new Uint8Array([1, 2, 3]).buffer }, 'github')
+        transaction.oncomplete = () => resolve()
+        transaction.onerror = () => reject(transaction.error)
+      })
+    } finally { database.close() }
+  })
+  const callsBefore = api.calls.length
+  await page.reload()
+  await expect(page.getByText('Not connected', { exact: true })).toBeVisible()
+  await expect(page.getByText('Ready', { exact: true })).toHaveCount(0)
+  await expect(page.getByRole('status')).toContainText(/setup|set up|reconnect|connect again/i)
+  expect(api.calls).toHaveLength(callsBefore)
+  expect(api.writes).toHaveLength(0)
+})
+
+test('a rejected token is not remembered even when trusted-phone setup was requested', async ({ page }) => {
+  const api = await mockGitHub(page)
+  api.rejectAuthentication()
+  await page.goto('/')
+  await page.getByRole('button', { name: 'Set up this phone', exact: true }).first().click()
+  const dialog = page.getByRole('dialog')
+  await dialog.getByLabel('Repository owner').fill('family')
+  await dialog.getByLabel('Data repository', { exact: true }).fill('press-data')
+  await dialog.getByLabel('Fine-grained personal access token').fill(TOKEN)
+  await dialog.getByLabel('Keep this phone connected', { exact: true }).check()
+  await dialog.getByRole('button', { name: 'Connect to GitHub', exact: true }).click()
+  await expect(dialog.getByRole('alert')).toContainText('rejected this token')
+  expect(await inspectSavedDevice(page)).toBeNull()
+  const callsBefore = api.calls.length
+  await page.reload()
+  await expect(page.getByText('Not connected', { exact: true })).toBeVisible()
+  expect(api.calls).toHaveLength(callsBefore)
+  expect(api.writes).toHaveLength(0)
 })

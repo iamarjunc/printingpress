@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useId, useState, type FormEvent } from "react";
 import type { GitHubConfig } from "../types";
 import { Icon } from "./Icon";
 export type RepositoryPreferences = {
@@ -11,12 +11,14 @@ export function ConnectionForm({
   onConnect,
 }: {
   preferences: RepositoryPreferences;
-  onConnect: (config: GitHubConfig) => Promise<void>;
+  onConnect: (config: GitHubConfig, rememberDevice?: boolean) => Promise<void>;
 }) {
+  const rememberHintId = useId();
   const [owner, setOwner] = useState(preferences.owner),
     [repo, setRepo] = useState(preferences.repo),
     [branch, setBranch] = useState(preferences.branch),
     [token, setToken] = useState("");
+  const [remember, setRemember] = useState(false);
   const [busy, setBusy] = useState(false),
     [error, setError] = useState("");
   async function submit(e: FormEvent) {
@@ -25,12 +27,15 @@ export function ConnectionForm({
     setError("");
     setBusy(true);
     try {
-      await onConnect({
-        owner: owner.trim(),
-        repo: repo.trim(),
-        branch: branch.trim(),
-        token: token.trim(),
-      });
+      await onConnect(
+        {
+          owner: owner.trim(),
+          repo: repo.trim(),
+          branch: branch.trim(),
+          token: token.trim(),
+        },
+        remember,
+      );
       setToken("");
     } catch (e) {
       setError(
@@ -47,10 +52,10 @@ export function ConnectionForm({
       <div className="security-note">
         <Icon name="shield" size={24} />
         <div>
-          <strong>Your token stays in this tab.</strong>
+          <strong>Set up this phone for the family.</strong>
           <p>
-            It is never saved to browser storage or included in the website.
-            Disconnect or close this tab when you finish.
+            Select Keep this phone connected so your parents can just open the
+            app and add or view records. No daily login is needed.
           </p>
         </div>
       </div>
@@ -113,6 +118,24 @@ export function ConnectionForm({
           </span>
         </label>
       </div>
+      <label className="remember-device-option">
+        <input
+          type="checkbox"
+          aria-label="Keep this phone connected"
+          aria-describedby={rememberHintId}
+          checked={remember}
+          onChange={(event) => setRemember(event.target.checked)}
+          disabled={busy}
+        />
+        <span>
+          <strong>Keep this phone connected</strong>
+          <span id={rememberHintId}>
+            Only on a trusted family phone. Access will be saved in this
+            browser; anyone using this phone can open the records. Leave
+            unchecked for this tab only.
+          </span>
+        </span>
+      </label>
       {error && (
         <div role="alert" className="notice notice-error">
           {error}

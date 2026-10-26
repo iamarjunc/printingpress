@@ -285,7 +285,7 @@ export function RecordForm({
     }
     if (!connected) {
       setSaveError(
-        "Connect your private repository before saving. Your entry is still here.",
+        "Connect this phone before saving. Your entry is still here.",
       );
       return;
     }
@@ -310,7 +310,7 @@ export function RecordForm({
       setSaveError(
         error instanceof Error
           ? error.message
-          : "GitHub did not confirm this save. Your entry has been kept. Check your connection and try again.",
+          : "The save was not confirmed. Your entry has been kept. Check your internet connection and try again.",
       );
       if (
         error instanceof GitHubError &&
@@ -757,8 +757,8 @@ export function RecordForm({
                 </div>
                 <h3>
                   {values.customer.trim()
-                    ? "A fresh page for this customer"
-                    : "Every order tells a story"}
+                    ? "No previous orders yet"
+                    : "Previous printing orders"}
                 </h3>
                 <p className="muted">
                   {values.customer.trim()
@@ -781,7 +781,7 @@ export function RecordForm({
               <path d="m12 3 8 4v5c0 5-8 9-8 9s-8-4-8-9V7z" />
               <path d="m8 12 3 3 5-6" />
             </svg>
-            <p>Your record is saved only when GitHub confirms the commit.</p>
+            <p>Wait for “Record saved” before closing this page.</p>
           </div>
         </aside>
       </div>
@@ -806,7 +806,7 @@ export function RecordForm({
             <strong>
               {latestRevision
                 ? "Latest version loaded — your entered changes are kept"
-                : "This record has changed on GitHub"}
+                : "A newer version of this record is available"}
             </strong>
             {latestRevision ? (
               <>
@@ -890,10 +890,10 @@ export function RecordForm({
         {!connected && (
           <div className="notice notice-info">
             <div>
-              <strong>Connect before saving</strong>
+              <strong>This phone needs to be connected</strong>
               <p>
-                You can prepare your entry now. Connect your private GitHub
-                repository when you’re ready.
+                Your entry is kept here. A family member can set up this phone
+                so records can be opened and saved.
               </p>
             </div>
             <button
@@ -902,7 +902,7 @@ export function RecordForm({
               onClick={onConnect}
               disabled={saving}
             >
-              Connect repository
+              Set up this phone
             </button>
           </div>
         )}
@@ -910,10 +910,10 @@ export function RecordForm({
       <div className="form-footer">
         <span className="muted">
           {saving
-            ? "Waiting for GitHub confirmation…"
+            ? "Saving… Please keep this page open."
             : dirty
               ? "Unsaved entry · Keep this page open"
-              : "A little care now. A clear record for years."}
+              : "Check the details, then save your record."}
         </span>
         <div>
           <button
