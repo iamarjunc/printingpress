@@ -31,6 +31,7 @@ const nav: { id: View; label: string; icon: IconName }[] = [
   { id: "records", label: "All records", icon: "records" },
   { id: "customers", label: "Customers", icon: "users" },
 ];
+const pressLogoUrl = `${import.meta.env.BASE_URL}logo.jpg`;
 const number = (n: number) => new Intl.NumberFormat("en-IN").format(n);
 const date = (s: string, full = false) =>
   new Date(s).toLocaleDateString(undefined, {
@@ -983,10 +984,13 @@ export default function App() {
           onClick={() => navigate("dashboard")}
           aria-label="Pressbook dashboard"
         >
-          <span className="brand-mark">
-            <Icon name="book" size={25} />
-            <i />
-          </span>
+          <img
+            className="brand-logo"
+            src={pressLogoUrl}
+            alt="Printing press logo"
+            width={112}
+            height={112}
+          />
           <span className="brand-name">
             pressbook<span>PRINTING PRESS RECORDS</span>
           </span>
@@ -1032,6 +1036,19 @@ export default function App() {
       </aside>
       <div className="workspace">
         <header className="topbar">
+          <button
+            className="mobile-brand"
+            onClick={() => navigate("dashboard")}
+            aria-label="Pressbook home"
+          >
+            <img
+              src={pressLogoUrl}
+              alt="Printing press logo"
+              width={52}
+              height={52}
+            />
+            <span>pressbook</span>
+          </button>
           <div className="breadcrumb">
             <span>Workspace</span>
             <Icon name="chevron" size={13} />
