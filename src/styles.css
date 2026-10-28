@@ -3588,3 +3588,273 @@ input::placeholder {
     padding-top: 24px;
   }
 }
+
+/* Phone records use full-width cards; desktop keeps the comparison table. */
+.record-cards,
+.filter-toggle {
+  display: none;
+}
+.brand-name {
+  overflow-wrap: anywhere;
+}
+@media (max-width: 760px) {
+  .workspace,
+  .main-content,
+  .panel {
+    min-width: 0;
+  }
+  .topbar {
+    padding: 0 14px;
+    height: 72px;
+    gap: 8px;
+  }
+  .mobile-brand {
+    min-width: 0;
+    gap: 8px;
+    flex: 1;
+  }
+  .mobile-brand img {
+    width: 44px;
+    height: 48px;
+  }
+  .mobile-brand span {
+    display: block;
+    font-size: 17px;
+    line-height: 1.2;
+    letter-spacing: -0.4px;
+    max-width: 155px;
+  }
+  .topbar-right {
+    flex-shrink: 0;
+    gap: 2px;
+  }
+  .sync-badge {
+    font-size: 10px;
+  }
+  .main-content {
+    padding: 20px 14px calc(100px + env(safe-area-inset-bottom));
+  }
+  .page-heading {
+    margin-bottom: 20px;
+    gap: 10px;
+  }
+  .page-heading h1 {
+    font-size: 27px;
+    line-height: 1.2;
+  }
+  .page-heading p {
+    font-size: 13px;
+    line-height: 1.6;
+    max-width: 32ch;
+  }
+  .page-heading .eyebrow {
+    font-size: 9px;
+    letter-spacing: 1.2px;
+  }
+  .page-heading > .button-group {
+    flex-shrink: 0;
+  }
+  .page-heading > .button-group > .btn {
+    font-size: 0;
+    gap: 0;
+    padding: 12px;
+    width: 44px;
+    height: 44px;
+  }
+  .page-heading > .button-group > .btn svg {
+    width: 20px;
+    height: 20px;
+  }
+  .notice {
+    padding: 12px;
+    margin-bottom: 18px;
+    font-size: 12px;
+    line-height: 1.5;
+  }
+  .filters {
+    padding: 14px;
+  }
+  .search-input {
+    min-height: 48px;
+    padding: 0 12px;
+  }
+  .search-input input {
+    min-width: 0;
+    font-size: 16px;
+  }
+  .filter-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    min-height: 44px;
+    background: transparent;
+    color: var(--ink);
+    font-size: 13px;
+    text-align: left;
+    margin-top: 8px;
+  }
+  .filter-toggle[aria-expanded="true"] svg {
+    transform: rotate(90deg);
+  }
+  .filter-row {
+    display: none;
+    margin-top: 10px;
+  }
+  .filter-row.is-expanded {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+  }
+  .filter-field {
+    font-size: 12px;
+  }
+  .filter-field .input {
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    font-size: 16px;
+    min-height: 46px;
+  }
+  .refresh-filter {
+    position: static;
+    grid-column: 2;
+    justify-self: end;
+  }
+  .results-heading {
+    padding: 12px 14px;
+    min-height: 46px;
+    font-size: 12px;
+  }
+  .results-heading > .text-btn {
+    margin-right: 0;
+    font-size: 12px;
+  }
+  .table-scroll {
+    display: none;
+  }
+  .record-cards {
+    display: grid;
+    gap: 12px;
+    padding: 0 12px 14px;
+  }
+  .record-card {
+    display: flex;
+    flex-direction: column;
+    gap: 13px;
+    width: 100%;
+    min-width: 0;
+    padding: 16px;
+    border: 1px solid #e2e8ec;
+    border-radius: 12px;
+    background: #fff;
+    color: var(--ink);
+    text-align: left;
+    box-shadow: 0 2px 6px #243c4d05;
+  }
+  .record-card:hover {
+    background: #f8fafb;
+  }
+  .record-card-heading {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+  }
+  .record-card-heading > span {
+    min-width: 0;
+  }
+  .record-card-heading strong {
+    display: block;
+    font-size: 16px;
+    line-height: 1.4;
+    overflow-wrap: anywhere;
+  }
+  .record-card-type {
+    display: block;
+    color: #61717c;
+    font-size: 13px;
+    margin-top: 3px;
+    overflow-wrap: anywhere;
+  }
+  .record-card-range {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    background: #f3f6f8;
+    border-radius: 8px;
+    padding: 10px 12px;
+  }
+  .record-card-range > span {
+    color: #61717c;
+    font-size: 11px;
+  }
+  .record-card-range strong {
+    font-size: 19px;
+    line-height: 1.4;
+    font-variant-numeric: tabular-nums;
+    overflow-wrap: anywhere;
+  }
+  .record-card-production {
+    display: flex;
+    align-items: center;
+    gap: 6px 12px;
+    flex-wrap: wrap;
+    font-size: 13px;
+    color: #61717c;
+  }
+  .record-card-production strong {
+    color: var(--ink);
+  }
+  .record-card-legacy {
+    font-size: 11px;
+    color: #796849;
+  }
+  .record-card-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding-top: 12px;
+    border-top: 1px solid var(--line);
+    font-size: 11px;
+    color: #61717c;
+  }
+  .record-card-footer .person-pill {
+    max-width: 100%;
+    font-size: 11px;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+  .pagination {
+    padding: 14px;
+    gap: 12px;
+    flex-wrap: wrap;
+    font-size: 12px;
+  }
+  .pagination .btn {
+    min-height: 44px;
+  }
+  .mobile-nav {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  .main-footer {
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 24px;
+  }
+}
+@media (max-width: 360px) {
+  .mobile-brand span {
+    font-size: 15px;
+    max-width: 120px;
+  }
+  .sync-badge {
+    font-size: 9px;
+    gap: 4px;
+  }
+  .topbar {
+    padding: 0 10px;
+  }
+}

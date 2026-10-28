@@ -128,86 +128,129 @@ function RecordTable({
   onOpen: (r: StoredRecord) => void;
 }) {
   return (
-    <div className="table-scroll">
-      <table className="records-table">
-        <thead>
-          <tr>
-            <th>Customer / bill type</th>
-            <th>Number range</th>
-            <th>Production</th>
-            <th>Added by</th>
-            <th>Created</th>
-            <th>
-              <span className="sr-only">Details</span>
-            </th>
-          </tr>
-        </thead>
-        <tbody>
-          {records.map((stored) => {
-            const r = stored.record;
-            return (
-              <tr key={stored.path}>
-                <td>
-                  <button
-                    className="customer-link"
-                    onClick={() => onOpen(stored)}
-                  >
-                    <span className="customer-avatar">
-                      {initials(r.customer_name)}
+    <>
+      <div className="record-cards">
+        {records.map((stored) => {
+          const r = stored.record;
+          return (
+            <button
+              className="record-card"
+              key={stored.path}
+              onClick={() => onOpen(stored)}
+              aria-label={`View ${r.customer_name} record ${r.id}`}
+            >
+              <span className="record-card-heading">
+                <span>
+                  <strong>{r.customer_name}</strong>
+                  <span className="record-card-type">{r.bill_type}</span>
+                </span>
+                <Icon name="chevron" size={18} />
+              </span>
+              <span className="record-card-range">
+                <span>Number range</span>
+                <strong>
+                  {number(r.start_no)} – {number(r.end_no)}
+                </strong>
+              </span>
+              <span className="record-card-production">
+                <strong>{number(r.books)} books</strong>
+                <span>{number(r.pages)} pages / book</span>
+                {r.is_legacy && (
+                  <span className="record-card-legacy">Diary record</span>
+                )}
+              </span>
+              <span className="record-card-footer">
+                <span className={`person-pill ${personClass(r.added_by)}`}>
+                  <span className="person-dot" />
+                  {r.added_by}
+                </span>
+                <span>{date(r.created_at)}</span>
+              </span>
+            </button>
+          );
+        })}
+      </div>
+      <div className="table-scroll">
+        <table className="records-table">
+          <thead>
+            <tr>
+              <th>Customer / bill type</th>
+              <th>Number range</th>
+              <th>Production</th>
+              <th>Added by</th>
+              <th>Created</th>
+              <th>
+                <span className="sr-only">Details</span>
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {records.map((stored) => {
+              const r = stored.record;
+              return (
+                <tr key={stored.path}>
+                  <td>
+                    <button
+                      className="customer-link"
+                      onClick={() => onOpen(stored)}
+                    >
+                      <span className="customer-avatar">
+                        {initials(r.customer_name)}
+                      </span>
+                      <span>
+                        <strong>{r.customer_name}</strong>
+                        <span className="table-sub">{r.bill_type}</span>
+                      </span>
+                    </button>
+                  </td>
+                  <td>
+                    <span className="range-text">
+                      {number(r.start_no)} <span className="range-dash">–</span>{" "}
+                      {number(r.end_no)}
                     </span>
-                    <span>
-                      <strong>{r.customer_name}</strong>
-                      <span className="table-sub">{r.bill_type}</span>
+                    {r.is_legacy && (
+                      <span className="legacy-mark">Diary record</span>
+                    )}
+                  </td>
+                  <td>
+                    <strong className="cell-books">
+                      {number(r.books)} books
+                    </strong>
+                    <span className="table-sub">
+                      {number(r.pages)} pages / book
                     </span>
-                  </button>
-                </td>
-                <td>
-                  <span className="range-text">
-                    {number(r.start_no)} <span className="range-dash">–</span>{" "}
-                    {number(r.end_no)}
-                  </span>
-                  {r.is_legacy && (
-                    <span className="legacy-mark">Diary record</span>
-                  )}
-                </td>
-                <td>
-                  <strong className="cell-books">
-                    {number(r.books)} books
-                  </strong>
-                  <span className="table-sub">
-                    {number(r.pages)} pages / book
-                  </span>
-                </td>
-                <td>
-                  <span className={`person-pill ${personClass(r.added_by)}`}>
-                    <span className="person-dot" />
-                    {r.added_by}
-                  </span>
-                </td>
-                <td>
-                  <span className="cell-date">{date(r.created_at)}</span>
-                  <span className="table-sub">
-                    {new Date(r.created_at).toLocaleTimeString(undefined, {
-                      hour: "2-digit",
-                      minute: "2-digit",
-                    })}
-                  </span>
-                </td>
-                <td>
-                  <button
-                    className="icon-btn"
-                    aria-label={`View ${r.customer_name} record ${r.id}`}
-                    onClick={() => onOpen(stored)}
-                  >
-                    <Icon name="chevron" size={17} />
-                  </button>
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-    </div>
+                  </td>
+                  <td>
+                    <span className={`person-pill ${personClass(r.added_by)}`}>
+                      <span className="person-dot" />
+                      {r.added_by}
+                    </span>
+                  </td>
+                  <td>
+                    <span className="cell-date">{date(r.created_at)}</span>
+                    <span className="table-sub">
+                      {new Date(r.created_at).toLocaleTimeString(undefined, {
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })}
+                    </span>
+                  </td>
+                  <td>
+                    <button
+                      className="icon-btn"
+                      aria-label={`View ${r.customer_name} record ${r.id}`}
+                      onClick={() => onOpen(stored)}
+                    >
+                      <Icon name="chevron" size={17} />
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </>
   );
 }
 function Photo({ client, path }: { client: GitHubClient; path: string }) {
@@ -281,6 +324,7 @@ export default function App() {
     [to, setTo] = useState(""),
     [person, setPerson] = useState(""),
     [sort, setSort] = useState("newest"),
+    [filtersExpanded, setFiltersExpanded] = useState(false),
     [page, setPage] = useState(1),
     [customerSearch, setCustomerSearch] = useState("");
   const [saving, setSaving] = useState(false);
@@ -982,7 +1026,7 @@ export default function App() {
         <button
           className="brand"
           onClick={() => navigate("dashboard")}
-          aria-label="Pressbook dashboard"
+          aria-label="Aiswarya Printers dashboard"
         >
           <img
             className="brand-logo"
@@ -992,7 +1036,7 @@ export default function App() {
             height={112}
           />
           <span className="brand-name">
-            pressbook<span>PRINTING PRESS RECORDS</span>
+            Aiswarya Printers<span>PRINTING PRESS RECORDS</span>
           </span>
         </button>
         <span className="nav-label">WORKSPACE</span>
@@ -1039,7 +1083,7 @@ export default function App() {
           <button
             className="mobile-brand"
             onClick={() => navigate("dashboard")}
-            aria-label="Pressbook home"
+            aria-label="Aiswarya Printers home"
           >
             <img
               src={pressLogoUrl}
@@ -1047,7 +1091,7 @@ export default function App() {
               width={52}
               height={52}
             />
-            <span>pressbook</span>
+            <span>Aiswarya Printers</span>
           </button>
           <div className="breadcrumb">
             <span>Workspace</span>
@@ -1162,7 +1206,11 @@ export default function App() {
                     last book.
                   </p>
                 </div>
-                <button className="btn btn-primary" onClick={onAdd}>
+                <button
+                  className="btn btn-primary"
+                  aria-label="Add record"
+                  onClick={onAdd}
+                >
                   <Icon name="plus" size={18} />
                   Add record
                 </button>
@@ -1253,7 +1301,7 @@ export default function App() {
                           {connected ? records.length : 0}
                         </span>
                       </h2>
-                      <p>The latest entries in your pressbook.</p>
+                      <p>The latest entries at Aiswarya Printers.</p>
                     </div>
                     <button
                       className="text-btn"
@@ -1355,7 +1403,7 @@ export default function App() {
             <>
               <div className="page-heading">
                 <div>
-                  <div className="eyebrow">YOUR COMPLETE PRESSBOOK</div>
+                  <div className="eyebrow">YOUR PRINTING RECORDS</div>
                   <h1>
                     All records<span className="accent-period">.</span>
                   </h1>
@@ -1364,7 +1412,11 @@ export default function App() {
                   </p>
                 </div>
                 <div className="button-group">
-                  <button className="btn btn-primary" onClick={onAdd}>
+                  <button
+                    className="btn btn-primary"
+                    aria-label="Add record"
+                    onClick={onAdd}
+                  >
                     <Icon name="plus" size={17} />
                     Add record
                   </button>
@@ -1376,7 +1428,7 @@ export default function App() {
                     <Icon name="search" size={19} />
                     <input
                       aria-label="Search records"
-                      placeholder="Search customer, bill type, or serial number…"
+                      placeholder="Search customer or number…"
                       value={search}
                       onChange={(e) => setSearch(e.target.value)}
                     />
@@ -1390,7 +1442,24 @@ export default function App() {
                       </button>
                     )}
                   </label>
-                  <div className="filter-row">
+                  <button
+                    className="filter-toggle"
+                    aria-expanded={filtersExpanded}
+                    aria-controls="record-filters"
+                    onClick={() => setFiltersExpanded(!filtersExpanded)}
+                  >
+                    <span>
+                      Filters &amp; sort
+                      {from || to || person
+                        ? ` · ${[from, to, person].filter(Boolean).length} active`
+                        : ""}
+                    </span>
+                    <Icon name="chevron" size={17} />
+                  </button>
+                  <div
+                    id="record-filters"
+                    className={`filter-row ${filtersExpanded ? "is-expanded" : ""}`}
+                  >
                     <label className="filter-field">
                       From
                       <input
@@ -1840,7 +1909,7 @@ export default function App() {
           )}
           <footer className="main-footer">
             <span>
-              pressbook <span className="footer-dot">·</span> Thoughtful
+              Aiswarya Printers <span className="footer-dot">·</span> Thoughtful
               recordkeeping.
             </span>
             <span>
