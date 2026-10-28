@@ -1,0 +1,26 @@
+{
+  "id": "./",
+  "name": "Aiswarya Printers",
+  "short_name": "Aiswarya",
+  "description": "A simpler way to keep your printing press records.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "theme_color": "#243c4d",
+  "background_color": "#ffffff",
+  "prefer_related_applications": false,
+  "icons": [
+    {
+      "src": "./icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "./icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}
