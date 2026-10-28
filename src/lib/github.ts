@@ -12,16 +12,36 @@ import {
 } from "./records";
 import { MAX_COMPRESSED_IMAGE_BYTES } from "./images";
 
+export interface ImportProgress {
+  uploaded: number;
+  skipped: number;
+  total: number;
+  path?: string;
+}
+
+export interface GitHubImportFile {
+  path: string;
+  bytes: Uint8Array;
+}
+
 export class GitHubError extends Error {
   readonly status: number;
   readonly kind: string;
   readonly retryAt?: Date;
-  constructor(message: string, status = 0, kind = "api", retryAt?: Date) {
+  readonly importProgress?: ImportProgress;
+  constructor(
+    message: string,
+    status = 0,
+    kind = "api",
+    retryAt?: Date,
+    importProgress?: ImportProgress,
+  ) {
     super(message);
     this.name = "GitHubError";
     this.status = status;
     this.kind = kind;
     this.retryAt = retryAt;
+    this.importProgress = importProgress;
   }
 }
 
@@ -809,6 +829,202 @@ export class GitHubClient {
       if (stored.record.photo_path)
         await this.cleanupPhoto(stored.record.photo_path);
       return { warnings: [...this.warnings] };
+    });
+  }
+
+  /**
+   * Import a reviewed migration into a private repository. Stable paths and
+   * exact byte comparisons make an interrupted import safe to resume, without
+   * overwriting an edited historical record or claiming an unconfirmed write.
+   */
+  async importFiles(
+    files: GitHubImportFile[],
+    onProgress?: (done: number, total: number, skipped: number) => void,
+  ): Promise<{ uploaded: number; skipped: number }> {
+    if (!Array.isArray(files) || !files.length || files.length > 10_000)
+      throw new GitHubError(
+        "Choose a migration containing between 1 and 10,000 files.",
+        0,
+        "validation",
+      );
+    const seen = new Set<string>();
+    let totalBytes = 0;
+    // Copy before queuing: a caller cannot change a selected migration while
+    // another write is finishing or an import is already in progress.
+    const snapshot = files.map((file) => {
+      if (
+        !file ||
+        typeof file.path !== "string" ||
+        !/^(?:records\/\d{4}\/(?:0[1-9]|1[0-2])\/[A-Za-z0-9_-]+\.json|backups\/(?:legacy_data|migration-report)\.json)$/.test(
+          file.path,
+        ) ||
+        seen.has(file.path) ||
+        !(file.bytes instanceof Uint8Array) ||
+        !file.bytes.byteLength ||
+        file.bytes.byteLength > 10 * 1024 * 1024
+      )
+        throw new GitHubError(
+          "Import refused: unsupported, duplicate or oversized migration file. Use the original JSON export to prepare it again.",
+          0,
+          "validation",
+        );
+      seen.add(file.path);
+      totalBytes += file.bytes.byteLength;
+      if (totalBytes > 25 * 1024 * 1024)
+        throw new GitHubError(
+          "This migration is larger than 25 MB. Split it into smaller reviewed imports.",
+          0,
+          "validation",
+        );
+      const bytes = new Uint8Array(file.bytes);
+      let record: PrintingRecord | undefined;
+      try {
+        const value = JSON.parse(
+          new TextDecoder("utf-8", { fatal: true }).decode(bytes),
+        );
+        if (file.path.startsWith("records/")) record = parseRecord(value);
+        else if (!value || typeof value !== "object") throw new Error();
+      } catch {
+        throw new GitHubError(
+          "Import refused: a migration file is not valid JSON or contains an invalid record. Prepare the original export again and review its errors.",
+          0,
+          "validation",
+        );
+      }
+      return { path: file.path, bytes, record };
+    });
+
+    return this.queueWrite(async () => {
+      let uploaded = 0;
+      let skipped = 0;
+      let currentPath: string | undefined;
+      try {
+        const access = await this.verifyAccess();
+        if (!access.private)
+          throw new GitHubError(
+            "Import refused: business records must go into a private data repository, never the public website repository.",
+            0,
+            "privacy",
+          );
+        // An inaccessible repository/branch must never be mistaken for a set
+        // of missing files merely because the Contents API returns a 404.
+        const head = await this.request<{
+          sha: string;
+          commit: { tree: { sha: string } };
+        }>(`/commits/${encodeURIComponent(this.config.branch)}`);
+        if (!isSha(head.sha) || !isSha(head.commit?.tree?.sha))
+          throw new GitHubError(
+            "Initialize the private data repository with a README on the selected branch before importing.",
+            0,
+            "uninitialized",
+          );
+        onProgress?.(0, snapshot.length, 0);
+        for (const file of snapshot) {
+          this.ensureActive();
+          currentPath = file.path;
+          let existing: ContentResult | undefined;
+          try {
+            existing = await this.content(file.path);
+          } catch (error) {
+            if (!(error instanceof GitHubError && error.status === 404))
+              throw error;
+          }
+          if (existing) {
+            if (existing.type !== "file")
+              throw new GitHubError(
+                `Import refused: ${file.path} is not a regular file. No overwrite was attempted.`,
+                409,
+                "conflict",
+              );
+            let currentBytes: Uint8Array;
+            try {
+              if (
+                existing.encoding === "base64" &&
+                typeof existing.content === "string"
+              )
+                currentBytes = decodeBase64(existing.content);
+              else {
+                // Contents responses omit inline data above 1 MB. Read the
+                // immutable blob so even a larger original backup is compared.
+                const blob = await this.request<{
+                  content: string;
+                  encoding: string;
+                }>(`/git/blobs/${existing.sha}`);
+                if (
+                  blob.encoding !== "base64" ||
+                  typeof blob.content !== "string"
+                )
+                  throw new GitHubError(
+                    "GitHub did not return readable file contents.",
+                    0,
+                    "invalid_response",
+                  );
+                currentBytes = decodeBase64(blob.content);
+              }
+            } catch (error) {
+              if (error instanceof GitHubError) throw error;
+              throw new GitHubError(
+                "GitHub returned an unreadable migration file. No overwrite was attempted.",
+                0,
+                "invalid_response",
+              );
+            }
+            if (
+              currentBytes.byteLength !== file.bytes.byteLength ||
+              currentBytes.some((byte, index) => byte !== file.bytes[index])
+            )
+              throw new GitHubError(
+                `A different or edited file already exists at ${file.path}. It was kept unchanged. Review it before retrying this import.`,
+                409,
+                "conflict",
+              );
+            if (file.record)
+              this.cache.set(file.path, {
+                record: file.record,
+                path: file.path,
+                sha: existing.sha,
+              });
+            skipped++;
+          } else {
+            const result = await this.request<CommitResult>(
+              `/contents/${pathURL(file.path)}`,
+              "PUT",
+              {
+                message: `Import historical printing file: ${file.path}`,
+                content: bytesToBase64(file.bytes),
+                branch: this.config.branch,
+              },
+            );
+            if (!isSha(result.commit?.sha) || !isSha(result.content?.sha))
+              throw new GitHubError(
+                "GitHub did not confirm this import commit. The last file may already have reached the repository.",
+                0,
+                "uncertain",
+              );
+            if (file.record)
+              this.cache.set(file.path, {
+                record: file.record,
+                path: file.path,
+                sha: result.content!.sha,
+              });
+            uploaded++;
+          }
+          onProgress?.(uploaded + skipped, snapshot.length, skipped);
+        }
+        return { uploaded, skipped };
+      } catch (error) {
+        const cause =
+          error instanceof GitHubError
+            ? error
+            : new GitHubError("The import was interrupted.", 0, "import");
+        throw new GitHubError(
+          `Import stopped after ${uploaded} confirmed new file${uploaded === 1 ? "" : "s"} and ${skipped} unchanged file${skipped === 1 ? "" : "s"}. ${cause.message} Select the same export and retry to resume; identical files will be skipped.`,
+          cause.status,
+          cause.kind,
+          cause.retryAt,
+          { uploaded, skipped, total: snapshot.length, path: currentPath },
+        );
+      }
     });
   }
 

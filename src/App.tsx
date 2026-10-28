@@ -17,6 +17,8 @@ import {
   type RepositoryPreferences,
 } from "./components/ConnectionForm";
 import { RecordForm } from "./components/RecordForm";
+import { LegacyImport } from "./components/LegacyImport";
+import type { PreparedImport } from "./lib/import";
 
 type View = "dashboard" | "add" | "records" | "customers" | "settings";
 type Connection = RepositoryPreferences & {
@@ -281,6 +283,7 @@ export default function App() {
     [page, setPage] = useState(1),
     [customerSearch, setCustomerSearch] = useState("");
   const [saving, setSaving] = useState(false);
+  const [importing, setImporting] = useState(false);
   const [remembered, setRemembered] = useState(false);
   const [opening, setOpening] = useState(true);
   const [forgetBusy, setForgetBusy] = useState(false);
@@ -298,8 +301,10 @@ export default function App() {
   const busyRef = useRef(false),
     mutationBusy = useRef(false),
     addDirtyRef = useRef(addDirty),
+    importingRef = useRef(importing),
     viewRef = useRef(view);
   addDirtyRef.current = addDirty;
+  importingRef.current = importing;
   viewRef.current = view;
   useEffect(() => {
     const update = () => setOnline(navigator.onLine);
@@ -355,6 +360,15 @@ export default function App() {
       channel?.close();
     };
   }, []);
+  useEffect(() => {
+    if (!importing) return;
+    const preventLoss = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", preventLoss);
+    return () => window.removeEventListener("beforeunload", preventLoss);
+  }, [importing]);
   function cancelConnecting() {
     deviceAttempt.current++;
     connectionAttempt.current++;
@@ -366,6 +380,15 @@ export default function App() {
     pendingConnection.current = null;
   }
   function navigate(next: View) {
+    if (importingRef.current && next !== viewRef.current) {
+      history.replaceState(null, "", "#" + viewRef.current);
+      setNotice({
+        kind: "warning",
+        message:
+          "Importing old records. Keep this page open until the import finishes.",
+      });
+      return;
+    }
     if (pendingConnection.current && !pendingAutomatic.current)
       cancelConnecting();
     // A pristine form should start with today's date, even in a tab left open overnight.
@@ -444,6 +467,10 @@ export default function App() {
     try {
       const access = await next.verifyAccess();
       if (attempt !== connectionAttempt.current) return;
+      if (!access.private)
+        throw new Error(
+          "This repository is public. Connect a separate private data repository, such as printingpress-data. The printingpress website repository must not hold your business records.",
+        );
       const loaded = await next.loadRecords();
       if (attempt !== connectionAttempt.current) return;
       if (mutationBusy.current)
@@ -607,6 +634,7 @@ export default function App() {
     client.current = null;
     mutationBusy.current = false;
     setSaving(false);
+    setImporting(false);
     setConnection(null);
     setRecords([]);
     setIssues([]);
@@ -657,6 +685,74 @@ export default function App() {
       });
     } finally {
       setForgetBusy(false);
+    }
+  }
+  async function importOldRecords(
+    plan: PreparedImport,
+    onProgress: (done: number, total: number, skipped: number) => void,
+  ) {
+    const current = client.current;
+    if (!current || !connection)
+      throw new Error("Connect the private data repository before importing.");
+    if (!connection.private)
+      throw new Error(
+        "Import only into a private data repository. Your website repository is separate.",
+      );
+    if (plan.rejected.length || !plan.entries.length)
+      throw new Error(
+        "Choose a valid export and resolve rejected rows before importing.",
+      );
+    if (mutationBusy.current)
+      throw new Error("Wait for the current save to finish before importing.");
+    if (!navigator.onLine)
+      throw new Error(
+        "You are offline. Keep the selected file and try again when connected.",
+      );
+    const id = generation.current;
+    mutationBusy.current = true;
+    setSaving(true);
+    setImporting(true);
+    invalidateRefresh();
+    try {
+      const result = await current.importFiles(
+        plan.files,
+        (done, total, skipped) => {
+          if (id === generation.current) onProgress(done, total, skipped);
+        },
+      );
+      if (id !== generation.current)
+        throw new Error(
+          "The connection ended during import. Some files may have been saved; reconnect and choose the same export to resume without duplicates.",
+        );
+      const confirmed =
+        "Import complete. " +
+        plan.entries.length +
+        " historical records are available.";
+      setNotice({ kind: "success", message: confirmed });
+      await syncRecords(true, confirmed);
+      return result;
+    } catch (error) {
+      if (id === generation.current) {
+        setNotice({
+          kind: "error",
+          message:
+            "Import was not completed. " +
+            (error instanceof Error
+              ? error.message
+              : "Choose the same file to retry safely."),
+        });
+        await syncRecords(
+          true,
+          "Import stopped. Any confirmed records have been kept; the same export can be retried safely.",
+        );
+      }
+      throw error;
+    } finally {
+      if (id === generation.current) {
+        mutationBusy.current = false;
+        setSaving(false);
+        setImporting(false);
+      }
     }
   }
   async function save(record: PrintingRecord, photoChange?: Blob | null) {
@@ -987,6 +1083,15 @@ export default function App() {
               >
                 <Icon name="close" size={16} />
               </button>
+            </div>
+          )}
+          {importing && (
+            <div className="notice opening-records" role="status">
+              <span className="spinner" />
+              <span>
+                Importing old records. Keep this page open until the import
+                finishes.
+              </span>
             </div>
           )}
           {opening && (
@@ -1625,6 +1730,24 @@ export default function App() {
                     )}
                   </div>
                 </section>
+                <LegacyImport
+                  key={
+                    generation.current +
+                    ":" +
+                    (connection
+                      ? connection.owner +
+                        "/" +
+                        connection.repo +
+                        ":" +
+                        connection.branch
+                      : "disconnected")
+                  }
+                  connected={connected}
+                  privateRepository={connection?.private === true}
+                  disabled={saving || deleteBusy || opening || forgetBusy}
+                  onImport={importOldRecords}
+                  onSetup={onConnect}
+                />
                 <details className="panel setup-details">
                   <summary>
                     <Icon name="download" size={19} />

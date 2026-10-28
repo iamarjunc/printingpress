@@ -75,6 +75,20 @@ The workflow requires repository Pages deployment to be enabled. It intentionall
 
 ## Import the actual legacy data
 
+The public `printingpress` repository contains the website source, not customer records. Connecting the app to it will not show your old diary records. The app now requires a **private data repository** and rejects the public website repository before loading or saving business records.
+
+### Import from the website, without terminal commands
+
+1. Create a separate private data repository, for example `printingpress-data`, initialized with a README. Give the setup token Contents read/write access to that data repository.
+2. In the app, open the gear → **Device setup**. Under **Connection details**, check that the repository is the private data repository, rather than `iamarjunc/printingpress`. Use **Change connection** to correct it. Select **Keep this phone connected** on a trusted family device.
+3. In **Device setup → Import old records**, choose the original `legacy_data.json` you exported from the old app. You can do this once on the computer holding the original file; other connected phones will then read the same GitHub records.
+4. Review the preview. The supplied original has **14 valid records**, with historical warnings preserved for review. Selecting a file makes no network writes.
+5. Click **Import 14 records** and keep the page open until **Import complete** appears. The app refreshes committed records automatically. The original backup is uploaded first, followed by one separate JSON per record and the review report, all into the private repository.
+
+If a connection fails partway through, select the same original export and retry. Identical already-committed files are skipped; edited/conflicting files are preserved and cause a clear refusal instead of an overwrite. Invalid rows block the upload until reviewed. The preview preserves duplicate historical entries rather than merging them. Browser imports support JSON exports up to 5 MB and 5,000 records; use the command-line importer below for larger reviewed exports. Source filenames and record/report bytes match the command-line importer, so switching between these two paths does not create duplicate files for the same export.
+
+### Prepared private migration files and command-line import
+
 The supplied `legacy_data.json` has already been inspected and migrated locally into the ignored `.private-data/` directory. It contains 14 valid historical rows. All 14 were retained, including suspicious duplicates; no original creation timestamp, customer spelling, ID or `is_legacy` flag was rewritten. The backup is an exact byte-for-byte copy. The migration report identifies quantity inconsistencies, customer capitalization variants and possible duplicate ranges for review. These warnings are not proof that a historical entry is wrong.
 
 Private files prepared locally:

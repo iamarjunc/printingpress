@@ -84,6 +84,11 @@ export function ConnectionForm({
             disabled={busy}
           />
         </label>
+        <p className="field-hint field-wide">
+          Use the private printingpress-data repository here. The public
+          printingpress repository hosts the website and has no customer
+          records.
+        </p>
         <label className="field field-wide">
           Branch
           <input
